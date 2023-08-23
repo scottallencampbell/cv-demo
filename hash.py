@@ -2,7 +2,7 @@ import math
 import cv2
 import numpy as np
 
-image_path = 'images/hash-7c.png'
+image_path = 'images/hash-9.png'
 
 def pre_process(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -15,8 +15,7 @@ def pre_process(img):
 def get_interior_box(thin, gray): 
     contours, _= cv2.findContours(thin, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     max_area = 0
-    c = 0
-
+    
     for i in contours:
         area = cv2.contourArea(i)
         
@@ -37,6 +36,7 @@ def get_interior_box(thin, gray):
     contours, _ = cv2.findContours(out_thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     rect = cv2.minAreaRect(contours[0])
     box = np.intp(cv2.boxPoints(rect))
+
     return box
 
 def get_end_points(img):
@@ -61,8 +61,41 @@ def get_end_points(img):
         if n == 1:
             end_points.append(p)
             
-    center_of_mass = get_center_of_mass(end_points)
-    sorted_end_points = sort_end_points_by_angle(end_points, center_of_mass)    
+    #center_of_mass = get_center_of_mass(end_points)
+    center_of_mass = get_center_of_largest_contour(img)    
+    farthest_end_points = get_farthest_end_points(end_points, center_of_mass, 8)
+    sorted_end_points = sort_end_points_by_angle(farthest_end_points, center_of_mass)    
+    return sorted_end_points
+
+def get_distance(p1, p2):
+    dis = ((p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2) ** 0.5
+    return dis
+
+def get_farthest_end_points(end_points, center_of_mass, count):
+    distances = []
+    
+    for p in end_points:
+        distance = get_distance(center_of_mass, p)
+        distances.append(distance)
+       
+    arr1 = np.array(distances)
+    arr2 = np.array(end_points)    
+    indexes = arr1.argsort()
+    sorted_distances = arr2[indexes[::-1]]
+    return sorted_distances[:count]
+    
+def sort_end_points_by_angle(end_points, center_of_mass):
+    angles = []
+    
+    for p in end_points:
+        angle = get_angle(center_of_mass, p)
+        angles.append(angle)
+       
+    arr1 = np.array(angles)
+    arr2 = np.array(end_points)    
+    indexes = arr1.argsort()
+    sorted_end_points = arr2[indexes]
+    
     return sorted_end_points
 
 def rotate_image(img, angle):
@@ -75,7 +108,7 @@ def get_bounding_box(img):
     contours = cv2.findContours(img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours = contours[0] if len(contours) == 2 else contours[1]
     rectangle = cv2.minAreaRect(contours[0])
-    center, dim, rot = rectangle
+    _, _, rot = rectangle
     box = np.intp(cv2.boxPoints(rectangle))    
     return [box, rot] 
 
@@ -90,6 +123,23 @@ def get_center_of_mass(points):
     center_x = int(x / len(points))
     center_y = int(y / len(points)) 
     return [center_x, center_y]
+
+def get_center_of_largest_contour(img):
+    contours, _ = cv2.findContours(img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    max_area = 0
+    max_area_contour = None
+
+    for contour in contours:
+        x,y,w,h = cv2.boundingRect(contour)
+        area = w * h;
+       
+        if area > max_area:
+            max_area = area
+            max_area_contour = contour
+
+    x, y, w, h = cv2.boundingRect(max_area_contour)
+    center_of_mass = get_center_of_mass([[x, y], [x + w, y], [x, y + h], [x + w, y + h]])
+    return center_of_mass
 
 def get_angle(point1, point2):
     angle = math.atan2((point2[0] - point1[0]), (point2[1] - point1[1]))
@@ -110,20 +160,6 @@ def get_rotational_loss(end_points):
     loss = (vert_line_0)**2 + (vert_line_1)**2 + (90 - horiz_line_0)**2 + (90 - horiz_line_1)**2
     return loss
 
-def sort_end_points_by_angle(end_points, center_of_mass):
-    angles = []
-    
-    for p in end_points:
-        angle = get_angle(center_of_mass, p)
-        angles.append(angle)
-       
-    arr1 = np.array(angles)
-    arr2 = np.array(end_points)    
-    indexes = arr1.argsort()
-    sorted_end_points = arr2[indexes]
-    
-    return sorted_end_points
-
 def line_intersection(line1, line2):
     xdiff = (line1[0][0] - line1[1][0], line2[0][0] - line2[1][0])
     ydiff = (line1[0][1] - line1[1][1], line2[0][1] - line2[1][1])
@@ -132,8 +168,9 @@ def line_intersection(line1, line2):
         return a[0] * b[1] - a[1] * b[0]
 
     div = det(xdiff, ydiff)
+    
     if div == 0:
-       raise Exception('lines do not intersect')
+       raise Exception('Failed to find a line intersection point')
 
     d = (det(*line1), det(*line2))
     x = det(d, xdiff) / div
@@ -166,32 +203,40 @@ def get_cells(end_points):
 original = cv2.imread(image_path)
 copy = original.copy()
 gray, processed = pre_process(copy)
-interior_box = get_interior_box(processed, gray)
-interior_box_rotation = get_angle(interior_box[0], interior_box[1])
-      
-# cv2.drawContours(copy, [interior_box], 0, (255,0, 0), 3) 
 
+center_of_mass = get_center_of_largest_contour(processed)
+
+try:
+    interior_box = get_interior_box(processed, gray)
+except:
+    raise Exception("Failed to find an interior region, gameboard does not appear to be complete")
+
+interior_box_rotation = get_angle(interior_box[0], interior_box[1])
 rotated = rotate_image(copy, interior_box_rotation)
 _, processed = pre_process(rotated)
 end_points = get_end_points(processed)
+
+if len(end_points) != 8:
+    raise Exception("Failed to find 8 line segment end points, gameboard does not appear to be complete")
+
 cells = get_cells(end_points)
 
 #rotational_loss = get_rotational_loss(end_points)
 #bounding_box, rotation = get_bounding_box(processed)
 
-#for i, p in enumerate(end_points):
-#    cv2.circle(rotated, p, 5, (0, 0, 255), 2)
-#    cv2.putText(rotated, str(i), p, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+for i, p in enumerate(end_points):
+    cv2.circle(rotated, p, 5, (0, 0, 255), 2)
+    cv2.putText(rotated, str(i), p, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-cv2.line(rotated, end_points[4], end_points[7], (255, 0, 0), 3)
-cv2.line(rotated, end_points[3], end_points[0], (255, 0, 0), 3)
-cv2.line(rotated, end_points[6], end_points[1], (0, 255, 0), 3)
-cv2.line(rotated, end_points[5], end_points[2], (0, 255, 0), 3)
+#cv2.line(rotated, end_points[4], end_points[7], (255, 0, 0), 3)
+#cv2.line(rotated, end_points[3], end_points[0], (255, 0, 0), 3)
+#cv2.line(rotated, end_points[6], end_points[1], (0, 255, 0), 3)
+#cv2.line(rotated, end_points[5], end_points[2], (0, 255, 0), 3)
 
 for i, cell in enumerate(cells):
     cv2.polylines(rotated, [cell], True, (0, 0, 255), 2)
     center_of_mass = get_center_of_mass(cell)
-    cv2.putText(rotated, str(i), center_of_mass, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    cv2.putText(rotated, str(i), center_of_mass, cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 255), 2)
     
 #for p in bounding_box:
 #    cv2.circle(rotated, p, 10, (255, 0, 0), 2)
