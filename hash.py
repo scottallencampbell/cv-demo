@@ -1,8 +1,9 @@
 import math
 import cv2
+import imutils
 import numpy as np
 
-image_path = 'images/hash-9a.png'
+image_path = 'images/hash-9.png'
 
 def pre_process(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -270,39 +271,47 @@ def test_end_point_orthogonality(points):
         or abs(90 - vert_line_0) > tolerance \
         or abs(90 - vert_line_1) > tolerance:
         raise Exception("Failed to detect gameboard, lines do not appear orthogonal")
-        
-def get_o_cells(board, img, max_radius, cells):
-    circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, 1, 20, param1 = 50, param2 = 30, minRadius = 10, maxRadius = max_radius)
-    circles = np.round(circles[0, :]).astype("int")
-        
-    for (x, y, _) in circles:    
-        for i, cell in enumerate(cells):
-            result = cv2.pointPolygonTest(cell, (int(x), int(y)), False) 
-
-            if result == 1:
-                board[i] = "O"
-        
-    return board
    
-def get_x_cells(board, img, cells):        
-    contours, _ = cv2.findContours(img, 1, 2)
-   
+def read_cells(board, img, cells):   
+    contours, _ = cv2.findContours(img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    x, y, w, h = cv2.boundingRect(cells[0])
+    min_area = .05 * w * h
+    max_area = .8 * w * h
+    
     for j, cell in enumerate(cells):
         if board[j] == " ":
             for i, contour in enumerate(contours):
-                x,y,w,h = cv2.boundingRect(contour)
-                        
-                a1 = cv2.pointPolygonTest(cell, (x,y), False) 
-                a2 = cv2.pointPolygonTest(cell, (x+w,y), False) 
-                a3 = cv2.pointPolygonTest(cell, (x,y+h), False) 
-                a4 = cv2.pointPolygonTest(cell, (x+w,y+h), False)
-                
-                if a1+a2+a3+a4 == 4:
-                    board[j] = "X"
-                
+                content = read_cell(contour, cell, min_area, max_area)                
+                   
+                if content != None:
+                    board[j] = content
+    
     return board
 
-
+def read_cell(contour, cell, min_area, max_area):
+    x, y, w, h = cv2.boundingRect(contour)
+    area = w * h
+    
+    if area > min_area and area < max_area:                
+        a1 = cv2.pointPolygonTest(cell, (x,y), False) 
+        a2 = cv2.pointPolygonTest(cell, (x+w,y), False) 
+        a3 = cv2.pointPolygonTest(cell, (x,y+h), False) 
+        a4 = cv2.pointPolygonTest(cell, (x+w,y+h), False)
+        
+        if a1+a2+a3+a4 != 4:
+            return None
+        else:                        
+            contour_area = cv2.contourArea(contour)
+            hull = cv2.convexHull(contour)
+            hullArea = cv2.contourArea(hull)
+            solidity = (contour_area) / float(hullArea)
+            print(solidity)
+            if solidity > .5:
+                return "O"
+            else:
+                return "X"
+            
+        
 original = cv2.imread(image_path)
 copy = original.copy()
 gray, thresh, processed = pre_process(copy)
@@ -313,8 +322,6 @@ contour_points = get_board_contour_points(thresh)
 end_points = get_end_points(contour_points, center_of_mass, 8)
 cells = get_cells(end_points)
 
-
-
 #corner_top_left = (min(end_points[5][0], end_points[6][0]), min(end_points[7][1], end_points[0][1]))
 #corner_top_right = (max(end_points[1][0], end_points[2][0]), min(end_points[7][1], end_points[0][1]))
 #corner_bottom_left = (min(end_points[5][0], end_points[6][0]), max(end_points[4][1], end_points[3][1]))
@@ -324,13 +331,9 @@ cells = get_cells(end_points)
 #board_height = (corner_bottom_left[1] + corner_bottom_right[1]) / 2 - (corner_top_left[1] + corner_top_right[1]) / 2
 
 board = [' '] * 9
-#board = get_o_cells(board, processed, int(board_width / 3), cells)
-board = get_x_cells(board, thresh, cells)
-  
+board = read_cells(board, thresh, cells)
 
-
-## display
-
+    
 for i, p in enumerate(end_points):
     cv2.circle(rotated, p, 5, (255,255,0), 5)
     #cv2.putText(rotated, str(i), p, cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 255), 2)
