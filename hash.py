@@ -10,7 +10,10 @@ def pre_process(img):
     blur = cv2.GaussianBlur(gray, (5,5), 0)
     thresh = cv2.adaptiveThreshold(blur, 255, 1, 1, 11, 2)
     thin = cv2.ximgproc.thinning(thresh)
-    return gray, thresh, thin
+    return gray, blur, thresh, thin
+    
+def add_channel_to_grayscale(img):
+    return np.stack((img,)*3, axis=-1)
     
 def rotate_to_orthogonal(copy, processed, gray):    
     try:
@@ -21,7 +24,7 @@ def rotate_to_orthogonal(copy, processed, gray):
     interior_box_rotation = get_angle(interior_box[0], interior_box[1])
     
     rotated = rotate_image(copy, interior_box_rotation)
-    gray, thresh, processed = pre_process(rotated)
+    gray, _, thresh, processed = pre_process(rotated)
     return rotated, gray, thresh, processed
 
 def get_interior_bounding_box(thin, gray): 
@@ -48,18 +51,10 @@ def get_interior_bounding_box(thin, gray):
     contours, _ = cv2.findContours(out_thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     rect = cv2.minAreaRect(contours[0])
     box = np.intp(cv2.boxPoints(rect))
-
-    x = 0
-    y = 0
+    center_point = get_center_of_mass(box)
+   
     
-    for p in box:
-        x += p[0]
-        y += p[1]
-        
-    center_x = int(x / len(box))
-    center_y = int(y / len(box))
-    
-    return box, [center_x, center_y]
+    return box, center_point
 
 def get_end_points(points, center_of_mass, max_points):
     distances = []
@@ -277,6 +272,8 @@ def read_cells(board, img, cells):
     x, y, w, h = cv2.boundingRect(cells[0])
     min_area = .05 * w * h
     max_area = .8 * w * h
+    x_contours = []
+    o_contours = []
     
     for j, cell in enumerate(cells):
         if board[j] == " ":
@@ -285,8 +282,13 @@ def read_cells(board, img, cells):
                    
                 if content != None:
                     board[j] = content
+                    
+                    if content == "X":
+                        x_contours.append(contour)
+                    else:
+                        o_contours.append(contour)
     
-    return board
+    return board, x_contours, o_contours
 
 def read_cell(contour, cell, min_area, max_area):
     x, y, w, h = cv2.boundingRect(contour)
@@ -304,23 +306,36 @@ def read_cell(contour, cell, min_area, max_area):
             contour_area = cv2.contourArea(contour)
             hull = cv2.convexHull(contour)
             hullArea = cv2.contourArea(hull)
-            solidity = (contour_area) / float(hullArea)
-            print(solidity)
-            if solidity > .5:
-                return "O"
-            else:
-                return "X"
+            solidity = (contour_area) / float(hullArea)            
+            return "O" if solidity > .5 else "X"
             
+def decorate_gameboard(img, end_points, cells, x_contours, o_contours):    
+    for contour in x_contours:
+        cv2.drawContours(img, [contour], 0, (0, 255, 0), 3)
+    
+    for contour in o_contours:
+        cv2.drawContours(img, [contour], 0, (255, 255, 0), 3)
+    
+    for i, p in enumerate(end_points):
+        cv2.circle(img, p, 8, (200, 200, 200), 2)
+        cv2.putText(img, str(i), p, cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+        
+    for i, cell in enumerate(cells):
+        cv2.polylines(img, [cell], True, (0, 0, 255), 2)
+        center_of_mass = get_center_of_mass(cell[:,0])
+        cv2.putText(img, str(i), center_of_mass, cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 255), 2)
+
         
 original = cv2.imread(image_path)
-copy = original.copy()
-gray, thresh, processed = pre_process(copy)
+copy = cv2.resize(original, (0,0), fx=0.5, fy=0.5) 
+gray, blur, thresh, processed = pre_process(copy)
 rotated, gray, thresh, processed = rotate_to_orthogonal(copy, processed, gray)
 
 center_of_mass = get_center_of_largest_contour(thresh)
 contour_points = get_board_contour_points(thresh)
 end_points = get_end_points(contour_points, center_of_mass, 8)
 cells = get_cells(end_points)
+
 
 #corner_top_left = (min(end_points[5][0], end_points[6][0]), min(end_points[7][1], end_points[0][1]))
 #corner_top_right = (max(end_points[1][0], end_points[2][0]), min(end_points[7][1], end_points[0][1]))
@@ -331,23 +346,48 @@ cells = get_cells(end_points)
 #board_height = (corner_bottom_left[1] + corner_bottom_right[1]) / 2 - (corner_top_left[1] + corner_top_right[1]) / 2
 
 board = [' '] * 9
-board = read_cells(board, thresh, cells)
+board, x_contours, o_contours = read_cells(board, thresh, cells)
 
-    
-for i, p in enumerate(end_points):
-    cv2.circle(rotated, p, 5, (255,255,0), 5)
-    #cv2.putText(rotated, str(i), p, cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 255), 2)
-    
-for i, cell in enumerate(cells):
-    cv2.polylines(rotated, [cell], True, (0, 0, 255), 2)
-    center_of_mass = get_center_of_mass(cell[:,0])
-    cv2.putText(rotated, str(i), center_of_mass, cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 255), 2)
+h, w, c = copy.shape
+virtual = 255 * np.ones(shape=(h, w, c), dtype=np.uint8)
+decorated = 0 * np.ones(shape=(h, w, c), dtype=np.uint8)
 
-    
-for i in range(0, 9, 3):
-    print(board[i:i+3])
+spacing = 100
+offset_x = 120
+offset_y = 70
+o_radius = int(spacing / 5)
+x_length = int(spacing / 7)
+stroke = 8
+
+lines = [[[1, 0], [1, 3]], [[2, 0], [2, 3]], [[0, 1], [3, 1]], [[0, 2], [3, 2]]];
+
+for line in lines: 
+    cv2.line(virtual, (
+        offset_x + line[0][0]*spacing, \
+        offset_y + line[0][1]*spacing), (\
+        offset_x + line[1][0]*spacing, \
+        offset_y + line[1][1]*spacing), (0, 0, 255), 4)
+
+for i in range(0, 3):
+    for j in range(0, 3):
+        content = board[i * 3 + j]
+        
+        if content != " ":
+            x = int(spacing * 1 * j + offset_x + spacing / 2)
+            y = int(spacing * 1* i + offset_y + spacing / 2)
+            
+            if content == "O":
+                cv2.circle(virtual, (x,y), o_radius, (255, 255, 0), stroke)
+            elif content == "X":
+                cv2.line(virtual, (x-x_length, y-x_length), (x+x_length, y+x_length), (0, 255, 0), stroke)
+                cv2.line(virtual, (x+x_length, y-x_length), (x-x_length, y+x_length), (0, 255, 0), stroke)
   
-cv2.imshow(f'Final', rotated) 
+decorate_gameboard(decorated, end_points, cells, x_contours, o_contours)
+
+left = np.concatenate((copy, decorated), axis=0)
+right = np.concatenate((add_channel_to_grayscale(thresh), virtual), axis=0)
+final = np.concatenate((left, right), axis=1)
+cv2.imshow(f'Final', final) 
 
 if cv2.waitKey(0) & 0xff == 27:  
     cv2.destroyAllWindows()
