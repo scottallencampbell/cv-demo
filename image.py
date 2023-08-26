@@ -1,6 +1,5 @@
 from ultralytics import YOLO
 import cv2
-import random
 import numpy as np
 
 def overlay(image, mask, color, alpha, resize=None): 
@@ -18,23 +17,19 @@ def overlay(image, mask, color, alpha, resize=None):
             
 colors = [(255,0,0), (0,255,0), (0,0,255), (255,255,0), (0,255,255), (255,0,255)]
   
+model = YOLO("weights/yolov8l-seg.pt")
 original = cv2.imread("images/breck.jpg")
 gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
 gray = np.stack((gray,)*3, axis=-1)
-
-model = YOLO("weights/yolov8l-seg.pt")
-
-class_names = model.names
-
 h, w, _ = original.shape
-results = model.predict(original, conf=.5)
+
+results = model.predict(original, conf=.5,classes=0)
 
 for r in results:
     boxes = r.boxes  # Boxes object for bbox outputs
     masks = r.masks  # Masks object for segment masks outputs
     probs = r.probs  # Class probabilities for classification outputs
 
-        
 if masks is not None:
     data = masks.data.cpu()
     count = 0

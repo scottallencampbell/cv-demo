@@ -387,7 +387,7 @@ decorate_gameboard(decorated, end_points, cells, x_contours, o_contours)
 left = np.concatenate((copy, decorated), axis=0)
 right = np.concatenate((add_channel_to_grayscale(thresh), virtual), axis=0)
 final = np.concatenate((left, right), axis=1)
-cv2.imshow(f'Final', final) 
+cv2.imshow(f'Tic tac toe', final) 
 
 if cv2.waitKey(0) & 0xff == 27:  
     cv2.destroyAllWindows()
