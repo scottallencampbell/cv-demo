@@ -3,9 +3,13 @@ from ultralytics import YOLO
 import cv2
 import numpy as np 
 
-classes = [0,2,39,41,45]
+classes = [0,2,39,41,45,56]
 colors = [(0,0,255), (255,0,0), (0,255,0), (255,255,0), (0,255,255), (255,0,255)]
     
+def get_box_coordinates(box):
+    b = box[0].xyxy.numpy()[0]
+    return int(b[0]), int(b[1]), int(b[2]), int(b[3])
+
 def add_overlay(img, mask, color, alpha, resize=None): 
     colored_mask = np.expand_dims(mask, 0).repeat(3, axis=0)
     colored_mask = np.moveaxis(colored_mask, 0, -1)
@@ -32,31 +36,36 @@ def get_center_of_mass(seg):
     
     return [cX, cY]
 
-def add_centered_text(img, seg, text):
+def add_centered_text(img, seg, text, offset_y = 0):
     center_of_mass = get_center_of_mass(seg)
     text_width, text_height = cv2.getTextSize(text, cv2.FONT_HERSHEY_DUPLEX, 0.5, 1)[0]
-    cv2.putText(img, text, (center_of_mass[0]-int(text_width/2),center_of_mass[1]-int(text_height/2)), cv2.FONT_HERSHEY_DUPLEX, 0.5, (255,255,255), 1, cv2.LINE_AA)
+    cv2.putText(img, text, (center_of_mass[0]-int(text_width/2),center_of_mass[1]-int(text_height/2) + offset_y), cv2.FONT_HERSHEY_DUPLEX, 0.5, (255,255,255), 1, cv2.LINE_AA)
     
 def decorate(img, results, names):
     
     for r in results:
         boxes = r.boxes
         masks = r.masks  
-        probs = r.probs  
-
+        
     if masks is None:
         return img
     
     data = masks.data.cpu()
     
-    for seg, box in zip(data.data.cpu().numpy(), boxes):    
+    for seg, box in zip(data.data.cpu().numpy(), boxes):  
+        if box.id is None:
+            continue
+          
         h, w, _ = img.shape
         seg = cv2.resize(seg, (w, h))
         index = classes.index(int(box.cls))
         color = colors[index % len(classes)]
+        id = int(box.id)
         
         img = add_overlay(img, seg, color, 0.2)
-        add_centered_text(img, seg, f'{names[int(box.cls)]} {int(box.conf*100)}%')
+        #add_centered_text(img, seg, f'{names[int(box.cls)]}\r\nid={id} {int(box.conf*100)}%')
+        add_centered_text(img, seg, f'{names[int(box.cls)]}')
+        add_centered_text(img, seg, f'id={id}', 15)
         
     draw_contours(img, masks)
     
@@ -65,6 +74,7 @@ def decorate(img, results, names):
 def main():
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     model = YOLO("weights/yolov8n-seg.pt")
+    model.fuse()
     
     while True:
         success, img = cap.read()
@@ -72,7 +82,7 @@ def main():
         if success == False:
             exit()
             
-        results = model(img, stream=True, conf=.6, classes=classes)
+        results = model.track(img, persist=True, conf=.5, iou=.5, classes=classes)
         decorated = decorate(img, results, model.names)
         
         cv2.imshow("Image", decorated)
