@@ -20,7 +20,7 @@ def add_overlay(img, mask, color, alpha, resize=None):
     
     return combined
 
-def drawContours(img, masks):
+def draw_contours(img, masks):
     for coord in masks.xy:
         ctr = np.array(coord).reshape((-1,1,2)).astype(np.int32)
         cv2.drawContours(img, [ctr], -1, (255,255,255), 2)            
@@ -45,7 +45,7 @@ def decorate(img, results, names):
         probs = r.probs  
 
     if masks is None:
-        return
+        return img
     
     data = masks.data.cpu()
     
@@ -56,9 +56,9 @@ def decorate(img, results, names):
         color = colors[index % len(classes)]
         
         img = add_overlay(img, seg, color, 0.2)
-        add_centered_text(img, seg, names[int(box.cls)])
+        add_centered_text(img, seg, f'{names[int(box.cls)]} {int(box.conf*100)}%')
         
-    drawContours(img, masks)
+    draw_contours(img, masks)
     
     return img
         
@@ -68,17 +68,16 @@ def main():
     
     while True:
         success, img = cap.read()
-        
+    
         if success == False:
             exit()
             
-        results = model(img, stream=True, conf=.5,classes=classes)
-        
+        results = model(img, stream=True, conf=.6, classes=classes)
         decorated = decorate(img, results, model.names)
-            
+        
         cv2.imshow("Image", decorated)
         cv2.waitKey(1)
-        
+                
 if __name__ == "__main__":
     main()
    
